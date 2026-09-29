@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Frogger - เกมกบข้ามถนน AR</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- MediaPipe Pose JS CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700&display=swap');
+        body {
+            font-family: 'Kanit', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            overflow-x: hidden;
+            user-select: none;
+        }
+        .canvas-container {
+            position: relative;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+            border-radius: 1rem;
+            overflow: hidden;
+        }
+        /* Custom pulse animation for status indicator */
+        @keyframes pulse-fast {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.95); }
+        }
+        .animate-pulse-fast {
+            animation: pulse-fast 0.6s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between items-center p-2 sm:p-4">
+
+    <!-- Header Section -->
+    <header class="w-full max-w-4xl flex flex-wrap justify-between items-center bg-slate-800/80 backdrop-blur-md p-4 rounded-2xl border border-slate-700 mb-3 shadow-lg">
+        <div class="flex items-center space-x-3">
+            <span class="text-3xl sm:text-4xl">🐸</span>
+            <div>
+                <h1 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-green-400 to-emerald-200 bg-clip-text text-transparent">
+                    AR Frogger
+                </h1>
+                <p class="text-xs text-slate-400">เกมกบข้ามถนนด้วยกล้องตรวจจับการกระโดด</p>
+            </div>
+        </div>
+        
+        <!-- Score & Stats Bar -->
+        <div class="flex items-center space-x-4 mt-2 sm:mt-0">
+            <div class="bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700 text-center">
+                <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">คะแนน</div>
+                <div id="scoreDisplay" class="text-xl font-bold text-yellow-400">0</div>
+            </div>
+            <div class="bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700 text-center">
+                <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">สูงสุด</div>
+                <div id="highScoreDisplay" class="text-xl font-bold text-emerald-400">0</div>
+            </div>
+            <div class="bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700 text-center">
+                <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">ชีวิต</div>
+                <div id="livesDisplay" class="text-xl font-bold text-red-400">❤️❤️❤️</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Interactive Area -->
+    <main class="w-full max-w-4xl flex flex-col items-center flex-grow justify-center">
+        <!-- Hidden video element for MediaPipe input -->
+        <video id="webcamVideo" class="hidden" playsinline muted></video>
+
+        <!-- Canvas Container -->
+        <div class="canvas-container w-full aspect-[4/3] max-h-[65vh] bg-slate-950 relative border-2 border-slate-700 flex justify-center items-center">
+            <!-- Game Canvas -->
+            <canvas id="gameCanvas" class="w-full h-full block"></canvas>
+
+            <!-- Status & AR Detector Overlay -->
+            <div class="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-700/80 flex items-center space-x-2 text-xs sm:text-sm">
+                <span id="cameraStatusDot" class="w-3 h-3 rounded-full bg-yellow-500"></span>
+                <span id="cameraStatusText" class="text-slate-300 font-medium">กำลังเตรียมกล้อง...</span>
+            </div>
+
+            <!-- Motion Intensity Meter -->
+            <div class="absolute top-3 right-3 bg-slate-900/80 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-700/80 flex flex-col items-end w-32 sm:w-40">
+                <div class="text-[10px] sm:text-xs text-slate-400 mb-1">แรงกระโดด (Jump Meter)</div>
+                <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700">
+                    <div id="jumpMeterBar" class="bg-gradient-to-r from-blue-500 to-green-400 h-2.5 rounded-full w-0 transition-all duration-75"></div>
+                </div>
+            </div>
+
+            <!-- Jump Action Flash Indicator -->
+            <div id="jumpFlash" class="absolute inset-0 border-4 border-green-400 pointer-events-none opacity-0 transition-opacity duration-150 rounded-1rem"></div>
+
+            <!-- Start / Overlay Screens -->
+            <div id="startOverlay" class="absolute inset-0 bg-slate-950/85 backdrop-blur-md flex flex-col justify-center items-center p-6 text-center z-10">
+                <div class="text-6xl mb-4 animate-bounce">🐸</div>
+                <h2 class="text-2xl sm:text-3xl font-bold mb-2">พร้อมข้ามถนนหรือยัง?</h2>
+                <p class="text-slate-300 max-w-md text-sm sm:text-base mb-6">
+                    ยืนหน้ากล้อง ให้เห็นศีรษะและไหล่ชัดเจน <br/>
+                    <strong class="text-green-400">"กระโดดขึ้นจริงๆ"</strong> เพื่อให้กบเดินหน้าข้ามถนน!
+                </p>
+                <button id="startBtn" class="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transform transition active:scale-95 flex items-center space-x-2 text-lg">
+                    <i class="fa-solid fa-play"></i>
+                    <span>เริ่มเล่นเกม</span>
+                </button>
+            </div>
+
+            <!-- Game Over / Win Banner Overlay -->
+            <div id="msgOverlay" class="hidden absolute inset-0 bg-slate-950/90 backdrop-blur-md flex flex-col justify-center items-center p-6 text-center z-20">
+                <div id="msgEmoji" class="text-6xl mb-3">💥</div>
+                <h2 id="msgTitle" class="text-3xl font-bold text-red-500 mb-2">Game Over!</h2>
+                <p id="msgText" class="text-slate-300 mb-6 text-sm sm:text-base">คุณถูกรถชนเสียแล้ว!</p>
+                <button id="restartBtn" class="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transform transition active:scale-95 flex items-center space-x-2">
+                    <i class="fa-solid fa-rotate-right"></i>
+                    <span>เล่นอีกครั้ง</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Controls & Calibration Panel -->
+        <div class="w-full max-w-4xl bg-slate-800/80 backdrop-blur-md p-4 rounded-2xl border border-slate-700 mt-3 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
+            <!-- Jump Sensitivity Adjustment -->
+            <div class="flex items-center space-x-3 w-full sm:w-auto flex-1">
+                <i class="fa-solid fa-sliders text-slate-400"></i>
+                <label for="sensitivitySlider" class="text-xs sm:text-sm font-medium text-slate-300 whitespace-nowrap">ความไวการจับกระโดด:</label>
+                <input type="range" id="sensitivitySlider" min="20" max="80" value="45" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-green-500">
+                <span id="sensitivityValue" class="text-xs font-mono text-green-400 w-8">45</span>
+            </div>
+
+            <!-- Manual Test Button & Keyboard guide -->
+            <div class="flex items-center space-x-3 w-full sm:w-auto justify-end">
+                <button id="manualJumpBtn" class="bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium px-4 py-2 rounded-xl border border-slate-600 text-xs sm:text-sm transition flex items-center space-x-2 active:scale-95">
+                    <i class="fa-solid fa-hand-pointer"></i>
+                    <span>ทดสอบกระโดด (Spacebar)</span>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer Information -->
+    <footer class="w-full max-w-4xl text-center py-2 text-xs text-slate-500">
+        AR Motion Tracking powered by MediaPipe Pose • Web Audio API Synthesizer
+    </footer>
+
+    <script>
+        // Audio Synthesizer Class (No external audio files needed)
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioContext();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            // Play Frog Boing Sound
+            playJump() {
+                if (!this.ctx) return;
+                try {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(450, this.ctx.currentTime + 0.15);
+
+                    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + 0.15);
+                } catch(e) { console.error(e); }
+            }
+
+            // Play Car Hit / Crash Sound
+            playCrash() {
+                if (!this.ctx) return;
+                try {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+                    osc.frequency.linearRampToValueAtTime(30, this.ctx.currentTime + 0.3);
+
+                    gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + 0.3);
+                } catch(e) { console.error(e); }
+            }
+
+            // Play Win Fanfare Melody
+            playWin() {
+                if (!this.ctx) return;
+                try {
+                    const notes = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
+                    notes.forEach((freq, index) => {
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+
+                        osc.type = 'triangle';
+                        osc.frequency.value = freq;
+
+                        const startTime = this.ctx.currentTime + index * 0.08;
+                        gain.gain.setValueAtTime(0, startTime);
+                        gain.gain.linearRampToValueAtTime(0.3, startTime + 0.02);
+                        gain.gain.exponentialRampToValueAtTime(0.01, startTime + 0.2);
+
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+
+                        osc.start(startTime);
+                        osc.stop(startTime + 0.2);
+                    });
+                } catch(e) { console.error(e); }
+            }
+        }
+
+        // Canvas & Game State Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const videoElement = document.getElementById('webcamVideo');
+
+        // UI Element References
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const highScoreDisplay = document.getElementById('highScoreDisplay');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const jumpMeterBar = document.getElementById('jumpMeterBar');
+        const jumpFlash = document.getElementById('jumpFlash');
+        const cameraStatusDot = document.getElementById('cameraStatusDot');
+        const cameraStatusText = document.getElementById('cameraStatusText');
+        const startOverlay = document.getElementById('startOverlay');
+        const msgOverlay = document.getElementById('msgOverlay');
+        const msgTitle = document.getElementById('msgTitle');
+        const msgText = document.getElementById('msgText');
+        const msgEmoji = document.getElementById('msgEmoji');
+        const sensitivitySlider = document.getElementById('sensitivitySlider');
+        const sensitivityValue = document.getElementById('sensitivityValue');
+
+        // Audio instance
+        const sound = new SoundFX();
+
+        // Game Configuration & Variables
+        let gameActive = false;
+        let score = 0;
+        let highScore = 0;
+        let lives = 3;
+
+        // Lane setup (Grid System)
+        const TOTAL_ROWS = 8; // Row 0 = Goal, Rows 1..6 = Roads, Row 7 = Start
+        let rowHeight = 0;
+        
+        // Frog Character State
+        const frog = {
+            row: TOTAL_ROWS - 1, // Start at bottom
+            xPercent: 0.5,      // Center horizontally (0.0 to 1.0)
+            size: 40,
+            emoji: '🐸'
+        };
+
+        // Vehicles configuration
+        let cars = [];
+        const carTypes = ['🚗', '🚚', '🚕', '🏎️', '🚌'];
+
+        // Generate moving cars for lanes 1 to TOTAL_ROWS - 2
+        function initCars() {
+            cars = [];
+            for (let row = 1; row <= TOTAL_ROWS - 2; row++) {
+                // Determine direction (1 = right, -1 = left)
+                const direction = (row % 2 === 0) ? 1 : -1;
+                const speed = (0.002 + Math.random() * 0.003) * (1 + score * 0.05); // Speed increases with score
+                const count = Math.floor(Math.random() * 2) + 1; // 1-2 cars per lane
+                const carEmoji = carTypes[Math.floor(Math.random() * carTypes.length)];
+
+                for (let i = 0; i < count; i++) {
+                    cars.push({
+                        row: row,
+                        xPercent: (i * (1 / count)) + (Math.random() * 0.2), // Staggered starting positions
+                        speed: speed,
+                        direction: direction,
+                        emoji: carEmoji,
+                        widthPercent: 0.12
+                    });
+                }
+            }
+        }
+
+        // Motion Tracking Variables
+        let poseHistory = [];
+        let lastJumpTime = 0;
+        const JUMP_COOLDOWN = 500; // ms between allowed jumps
+        let sensitivityThreshold = 0.045; // Based on normalized Y coordinates
+
+        // Sensitivity slider event
+        sensitivitySlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            sensitivityValue.innerText = val;
+            // Scale slider range 20-80 to normalized threshold 0.080 - 0.020
+            sensitivityThreshold = 0.09 - (val / 1000);
+        });
+
+        // Trigger Jump Action
+        function triggerJump() {
+            if (!gameActive) return;
+
+            const now = Date.now();
+            if (now - lastJumpTime < JUMP_COOLDOWN) return;
+            lastJumpTime = now;
+
+            // Flash Jump Indicator UI
+            jumpFlash.classList.remove('opacity-0');
+            jumpFlash.classList.add('opacity-100');
+            setTimeout(() => jumpFlash.classList.add('opacity-0'), 150);
+
+            // Play Sound Effect
+            sound.playJump();
+
+            // Move Frog Up 1 Row
+            frog.row--;
+
+            // Check Win Condition (Reached Row 0)
+            if (frog.row <= 0) {
+                handleWin();
+            }
+        }
+
+        // MediaPipe Pose Initialization
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+
+        pose.setOptions({
+            modelComplexity: 0, // Lightweight model for high performance
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(onPoseResults);
+
+        // Process Motion Results from Pose Landmarks
+        function onPoseResults(results) {
+            if (!results.poseLandmarks) {
+                cameraStatusDot.className = "w-3 h-3 rounded-full bg-red-500 animate-pulse";
+                cameraStatusText.innerText = "ไม่พบผู้เล่นหน้ากล้อง";
+                jumpMeterBar.style.width = '0%';
+                return;
+            }
+
+            cameraStatusDot.className = "w-3 h-3 rounded-full bg-green-500";
+            cameraStatusText.innerText = "ตรวจจับท่าทางพร้อมแล้ว";
+
+            // Focus on Nose (Landmark 0) or Average Shoulders (11, 12)
+            const nose = results.poseLandmarks[0];
+            if (!nose) return;
+
+            const currentY = nose.y;
+
+            // Maintain rolling buffer of past Y positions
+            poseHistory.push(currentY);
+            if (poseHistory.length > 10) poseHistory.shift();
+
+            // Calculate baseline Y average
+            const avgY = poseHistory.reduce((a, b) => a + b, 0) / poseHistory.length;
+
+            // Rapid upward displacement detection (jumping causes Y value to decrease rapidly)
+            const upwardDelta = avgY - currentY; // Positive = Moving Upwards
+
+            // Update UI Meter
+            const meterValue = Math.max(0, Math.min(100, (upwardDelta / sensitivityThreshold) * 100));
+            jumpMeterBar.style.width = `${meterValue}%`;
+
+            // Detect Jump Trigger Condition
+            if (upwardDelta > sensitivityThreshold) {
+                triggerJump();
+            }
+        }
+
+        // MediaPipe Camera Feed Controller
+        let camera = null;
+        function setupCamera() {
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+            camera.start()
+                .then(() => {
+                    cameraStatusDot.className = "w-3 h-3 rounded-full bg-green-500";
+                    cameraStatusText.innerText = "เปิดกล้องสำเร็จ";
+                })
+                .catch((err) => {
+                    console.error("Camera access error:", err);
+                    cameraStatusDot.className = "w-3 h-3 rounded-full bg-red-500";
+                    cameraStatusText.innerText = "ไม่สามารถเปิดกล้องได้";
+                });
+        }
+
+        // Canvas Resize & Dynamic Resolution Adjustment
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            rowHeight = canvas.height / TOTAL_ROWS;
+            frog.size = Math.min(canvas.width * 0.08, rowHeight * 0.7);
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // Update Car Positions and Collision Checks
+        function updatePhysics() {
+            if (!gameActive) return;
+
+            // Update cars
+            cars.forEach(car => {
+                car.xPercent += car.speed * car.direction;
+
+                // Wrap around edges
+                if (car.direction === 1 && car.xPercent > 1.1) {
+                    car.xPercent = -0.15;
+                } else if (car.direction === -1 && car.xPercent < -0.15) {
+                    car.xPercent = 1.15;
+                }
+
+                // Check collision with Frog
+                if (car.row === frog.row) {
+                    const frogX = frog.xPercent * canvas.width;
+                    const carX = car.xPercent * canvas.width;
+                    const carWidth = car.widthPercent * canvas.width;
+
+                    // Simple AABB Collision check
+                    if (frogX + frog.size * 0.3 > carX && 
+                        frogX - frog.size * 0.3 < carX + carWidth) {
+                        handleCollision();
+                    }
+                }
+            });
+        }
+
+        // Render Game Graphics on Canvas
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Draw Mirror Video Background
+            if (videoElement.readyState >= 2) {
+                ctx.save();
+                ctx.scale(-1, 1); // Mirror effect
+                ctx.drawImage(videoElement, -canvas.width, 0, canvas.width, canvas.height);
+                ctx.restore();
+            } else {
+                // Dark background fallback
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // 2. Draw Translucent Road Lanes & Goal Area
+            for (let row = 0; row < TOTAL_ROWS; row++) {
+                const y = row * rowHeight;
+
+                if (row === 0) {
+                    // Goal Line (Top) - Emerald Green Theme
+                    ctx.fillStyle = 'rgba(16, 185, 129, 0.4)';
+                    ctx.fillRect(0, y, canvas.width, rowHeight);
+                    
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `${rowHeight * 0.4}px Kanit`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🏁 เส้นชัย (GOAL) 🏁', canvas.width / 2, y + rowHeight * 0.65);
+
+                } else if (row === TOTAL_ROWS - 1) {
+                    // Starting Safe Zone (Bottom)
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+                    ctx.fillRect(0, y, canvas.width, rowHeight);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `${rowHeight * 0.35}px Kanit`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('จุดเริ่มต้น (กระโดดเพื่อเดินหน้า)', canvas.width / 2, y + rowHeight * 0.65);
+
+                } else {
+                    // Asphalt Road Lanes
+                    ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+                    ctx.fillRect(0, y, canvas.width, rowHeight);
+
+                    // Dashed Lane Dividers
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([15, 15]);
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(canvas.width, y);
+                    ctx.stroke();
+                    ctx.setLineDash([]); // Reset line dash
+                }
+            }
+
+            // 3. Draw Moving Vehicles
+            cars.forEach(car => {
+                const x = car.xPercent * canvas.width;
+                const y = car.row * rowHeight;
+                const fontSize = rowHeight * 0.7;
+
+                ctx.save();
+                ctx.font = `${fontSize}px sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+
+                // Flip emoji direction if car moves left
+                if (car.direction === -1) {
+                    ctx.translate(x + fontSize, y + rowHeight / 2);
+                    ctx.scale(-1, 1);
+                    ctx.fillText(car.emoji, 0, 0);
+                } else {
+                    ctx.fillText(car.emoji, x, y + rowHeight / 2);
+                }
+                ctx.restore();
+            });
+
+            // 4. Draw Player Frog Character
+            const frogX = frog.xPercent * canvas.width;
+            const frogY = frog.row * rowHeight + rowHeight / 2;
+
+            ctx.font = `${frog.size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Draw Frog Glow Effect
+            ctx.shadowColor = '#4ade80';
+            ctx.shadowBlur = 15;
+            ctx.fillText(frog.emoji, frogX, frogY);
+            ctx.shadowBlur = 0; // Reset glow
+        }
+
+        // Master Animation Loop
+        function gameLoop() {
+            updatePhysics();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle Winning a Round
+        function handleWin() {
+            sound.playWin();
+            score++;
+            if (score > highScore) {
+                highScore = score;
+                highScoreDisplay.innerText = highScore;
+            }
+            scoreDisplay.innerText = score;
+
+            // Reset Frog position and re-init faster cars
+            resetFrog();
+            initCars();
+        }
+
+        // Handle Car Collision
+        function handleCollision() {
+            sound.playCrash();
+            lives--;
+            updateLivesDisplay();
+
+            if (lives <= 0) {
+                // Game Over State
+                gameActive = false;
+                msgEmoji.innerText = '💥';
+                msgTitle.innerText = 'Game Over!';
+                msgTitle.className = "text-3xl font-bold text-red-500 mb-2";
+                msgText.innerText = `คะแนนที่คุณทำได้: ${score} คะแนน`;
+                msgOverlay.classList.remove('hidden');
+            } else {
+                // Flash screen & reset position
+                resetFrog();
+            }
+        }
+
+        // Reset Frog to Starting Position
+        function resetFrog() {
+            frog.row = TOTAL_ROWS - 1;
+            frog.xPercent = 0.5;
+        }
+
+        // Update Lives Heart Display
+        function updateLivesDisplay() {
+            livesDisplay.innerText = '❤️'.repeat(Math.max(0, lives));
+        }
+
+        // Start / Restart Game Functions
+        function startGame() {
+            sound.init();
+            score = 0;
+            lives = 3;
+            scoreDisplay.innerText = score;
+            updateLivesDisplay();
+            resetFrog();
+            initCars();
+
+            startOverlay.classList.add('hidden');
+            msgOverlay.classList.add('hidden');
+            gameActive = true;
+        }
+
+        // Event Listeners setup
+        document.getElementById('startBtn').addEventListener('click', startGame);
+        document.getElementById('restartBtn').addEventListener('click', startGame);
+        document.getElementById('manualJumpBtn').addEventListener('click', () => {
+            sound.init();
+            triggerJump();
+        });
+
+        // Keyboard Controls Fallback (Spacebar or Up Arrow)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                e.preventDefault();
+                sound.init();
+                triggerJump();
+            }
+        });
+
+        // Window Load Startup Initialization
+        window.onload = () => {
+            resizeCanvas();
+            setupCamera();
+            initCars();
+            requestAnimationFrame(gameLoop);
+        };
+    </script>
+</body>
+</html>
